@@ -24,7 +24,7 @@ pub async fn write_request(
     } else {
         req.path[0..].as_bytes()
     });
-    http_reg.extend(b" HTTP/1.1\n");
+    http_reg.extend(b" HTTP/1.1\r\n");
 
     let req_header_names: HashSet<&HeaderName> = req.headers.iter().map(|(n, _)| n).collect();
 
@@ -37,10 +37,10 @@ pub async fn write_request(
         http_reg.extend(name.as_str().as_bytes());
         http_reg.extend(b": ");
         http_reg.extend(value.as_bytes());
-        http_reg.extend(b"\n");
+        http_reg.extend(b"\r\n");
     }
 
-    http_reg.extend(b"\n");
+    http_reg.extend(b"\r\n");
 
     log::debug!(
         "sending {} to '{}://{}:{}{}{}'",
