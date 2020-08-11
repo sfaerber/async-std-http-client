@@ -1,0 +1,15 @@
+[package]
+edition = "2018"
+name = "async-std-http-client-simple-test"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-std-http-client = {path = "../main"}
+log = "0.4"
+simple_logger = "1.6.0"
+
+[dependencies.async-std]
+features = ["attributes"]
+version = "1.6.0"

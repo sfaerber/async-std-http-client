@@ -1,0 +1,10 @@
+{
+  "name": "async-std-http-client-dev",
+  "dockerFile": "Dockerfile",
+  "forwardPorts": [],
+  "extensions": [
+    "matklad.rust-analyzer",
+    "be5invis.toml",
+    "statiolake.vscode-rustfmt"
+  ]
+}
