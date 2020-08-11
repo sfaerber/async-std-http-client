@@ -221,8 +221,9 @@ impl Client {
         con: &mut Connection,
         req: &Request,
     ) -> Result<(Response, ConnectionState)> {
+        let start = Instant::now();
         write_request(con, &req, &self.config).await?;
-        read_reponse(con, &self.config).await
+        read_reponse(con, &self.config, start).await
     }
 
     async fn add_connection_if_undeflow(&self) -> Result<()> {

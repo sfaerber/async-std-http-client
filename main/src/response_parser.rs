@@ -6,10 +6,12 @@ use http::{
     HeaderMap, HeaderValue,
 };
 use http_parser::*;
+use std::time::Instant;
 
 pub async fn read_reponse(
     rw: &mut Connection,
     _config: &ClientConfig,
+    started_at: Instant,
 ) -> Result<(Response, ConnectionState)> {
     log::debug!("starting to read response");
 
@@ -22,9 +24,10 @@ pub async fn read_reponse(
         last_header_name: None,
         status: None,
         is_message_complete: false,
+        started_at,
     };
 
-    let mut buffer: [u8; 4096] = [0; 4096];
+    let mut buffer: [u8; 1024 * 64] = [0; 1024 * 64];
 
     loop {
         let bytes_read = rw.1.read(&mut buffer).await.map_err(|err| Error {
@@ -71,11 +74,12 @@ pub async fn read_reponse(
             // dbg!(content_length);
 
             log::debug!(
-                "successfull readed reponse, status {}, {} bytes, {} headers, connection: {:?}",
+                "successfull readed reponse, status {}, {} bytes, {} headers, connection: {:?}, duration: {}ms",
                 response.status,
                 response.body.len(),
                 response.headers.len(),
-                connection_state
+                connection_state,
+                response.duration.as_millis(),
             );
 
             return Ok((response, ConnectionState::KeepAlive));
@@ -90,6 +94,7 @@ struct Callback {
     last_header_name: Option<HeaderName>,
     status: Option<StatusCode>,
     is_message_complete: bool,
+    started_at: Instant,
 }
 
 impl Callback {
@@ -100,6 +105,7 @@ impl Callback {
                     status,
                     headers: HeaderMap::with_capacity(0),
                     body: Vec::with_capacity(0),
+                    duration: Instant::now().duration_since(self.started_at),
                 };
 
                 std::mem::swap(&mut response.headers, &mut self.headers);

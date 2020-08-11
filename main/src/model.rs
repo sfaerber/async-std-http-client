@@ -167,6 +167,7 @@ pub struct Response {
     pub status: StatusCode,
     pub body: Vec<u8>,
     pub headers: http::HeaderMap,
+    pub duration: Duration,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

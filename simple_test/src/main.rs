@@ -18,7 +18,7 @@ async fn test() {
 
     let rs2 = client
         .req(
-            Request::get("what/wasm")
+            Request::get("static/styles/solarized-dark.css")
                 .with_header(USER_AGENT, HeaderValue::from_bytes(b"test").unwrap())
                 .build(),
         )
@@ -27,7 +27,7 @@ async fn test() {
 
     log::info!("request 2 done, got {} bytes", rs2.body.len());
 
-    task::sleep(Duration::from_secs(12)).await;
+    task::sleep(Duration::from_secs(1)).await;
 
     let rs3 = client
         .req(Request::get("what/cli").build())
