@@ -6,5 +6,8 @@
     "matklad.rust-analyzer",
     "be5invis.toml",
     "statiolake.vscode-rustfmt"
+  ],
+  "mounts": [
+    "source=async-std-http-client-dev-target,target=${containerWorkspaceFolder}/target,type=volume"
   ]
 }
