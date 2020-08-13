@@ -4,6 +4,14 @@ use std::time::Duration;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+
+pub enum InternalRequestError {
+    ConnectionIsClosed,
+    UnrecoverableError(Error)
+}
+
+pub type InternalRequestResult<T> = std::result::Result<T, InternalRequestError>;
+
 pub trait AsyncReadWriter: 'static + Unpin + Send + Sync + AsyncRead + AsyncWrite {}
 
 impl<T> AsyncReadWriter for T where T: 'static + Unpin + Send + Sync + AsyncRead + AsyncWrite {}
@@ -62,20 +70,27 @@ pub struct RequestBuilder {
 }
 
 pub trait ToPath {
-    fn to_paht(self) -> String;
+    fn to_path(self) -> String;
 }
 
 impl ToPath for String {
-    fn to_paht(self) -> String {
+    fn to_path(self) -> String {
         self
     }
 }
 
 impl ToPath for &str {
-    fn to_paht(self) -> String {
+    fn to_path(self) -> String {
         self.to_string()
     }
 }
+
+impl ToPath for &&str {
+    fn to_path(self) -> String {
+        self.to_string()
+    }
+}
+
 
 impl Request {
     pub fn get<P>(path: P) -> RequestBuilder
@@ -112,7 +127,7 @@ impl Request {
     {
         RequestBuilder {
             method,
-            path: path.to_paht(),
+            path: path.to_path(),
             body: None,
             headers: http::HeaderMap::new(),
         }

@@ -43,7 +43,7 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> Result<Client> {
+    pub fn build(&self) -> Result<Client> {
         //
         let url = Url::parse(&self.base_url).map_err(|err| Error {
             text: format!("could not parse base url: {}", err),
@@ -91,7 +91,7 @@ impl Builder {
         };
 
         let state = ClientState {
-            idle_connections: im::OrdMap::new(),
+            living_connections: im::OrdMap::new(),
             connecting_connections: im::OrdSet::new(),
             requests: im::OrdMap::new(),
             connection_counter: 0,
@@ -115,7 +115,7 @@ enum ConnectionBusiness {
 
 #[derive(Clone)]
 struct ClientState {
-    idle_connections: im::OrdMap<ConnectionId, (Option<Waker>, ConnectionBusiness)>,
+    living_connections: im::OrdMap<ConnectionId, (Option<Waker>, ConnectionBusiness)>,
     connecting_connections: im::OrdSet<ConnectionId>,
     connection_counter: u64,
     requests: im::OrdMap<
@@ -133,7 +133,7 @@ struct ClientState {
 
 impl ClientState {
     fn connection_count(&self) -> usize {
-        self.idle_connections.len() + self.connecting_connections.len()
+        self.living_connections.len() + self.connecting_connections.len()
     }
 
     fn longest_waiting_request_id(&self) -> Option<RequestId> {
@@ -143,6 +143,11 @@ impl ClientState {
             .filter(|(_, (_, _, _, _, c))| c.is_none())
             .map(|(id, _)| *id)
             .next()
+    }
+
+    fn needs_more_connections(&self, config: &ClientConfig) -> bool {
+        self.connection_count() < config.max_connections
+            && self.connection_count() < self.requests.len()
     }
 }
 
@@ -155,19 +160,19 @@ pub struct Client {
 }
 
 impl Client {
-    fn _print_state(&self) -> String {
+    pub fn print_internal_state(&self) -> String {
         use itertools::*;
         let state = self.state.load();
         format!(
             "idle: [{}], working: [{}], connecting: [{}], waiting: [{}]",
             state
-                .idle_connections
+                .living_connections
                 .iter()
                 .filter(|(_, (_, b))| b == &ConnectionBusiness::Idle)
                 .map(|i| i.0)
                 .join(","),
             state
-                .idle_connections
+                .living_connections
                 .iter()
                 .filter(|(_, (_, b))| b == &ConnectionBusiness::Working)
                 .map(|i| i.0)
@@ -220,18 +225,16 @@ impl Client {
         &self,
         con: &mut Connection,
         req: &Request,
-    ) -> Result<(Response, ConnectionState)> {
+    ) -> InternalRequestResult<(Response, ConnectionState)> {
         let start = Instant::now();
         write_request(con, &req, &self.config).await?;
         read_reponse(con, &self.config, start).await
     }
 
     async fn add_connection_if_undeflow(&self) -> Result<()> {
-        let max_connections = self.config.max_connections;
-
         let old_state = self.state.rcu(move |s| {
             let mut s = (**s).clone();
-            if s.connection_count() < max_connections && s.idle_connections.len() == 0 {
+            if s.needs_more_connections(&self.config) {
                 s.connection_counter += 1;
                 s.connecting_connections
                     .insert(ConnectionId(s.connection_counter));
@@ -239,7 +242,7 @@ impl Client {
             s
         });
 
-        if old_state.connection_count() < max_connections && old_state.idle_connections.len() == 0 {
+        if old_state.needs_more_connections(&self.config) {
             let connection_id = ConnectionId(old_state.connection_counter + 1);
             match self.connect().await {
                 Ok(con) => {
@@ -250,7 +253,7 @@ impl Client {
                         if s.connecting_connections.remove(&connection_id).is_none() {
                             illegal_state(1)
                         }
-                        if s.idle_connections
+                        if s.living_connections
                             .insert(connection_id, (None, ConnectionBusiness::Idle))
                             .is_some()
                         {
@@ -276,9 +279,21 @@ impl Client {
         Ok(())
     }
 
-    pub async fn req(&self, req: Request) -> Result<Response> {
-        self.add_connection_if_undeflow().await?;
+    fn wake_connection(&self) {
+        for waker in self
+            .state
+            .load()
+            .living_connections
+            .iter()
+            .filter(|(_, (_, x))| x == &ConnectionBusiness::Idle)
+            .flat_map(|(_, (waker_option, _))| waker_option.iter())
+            .take(2)
+        {
+            waker.wake_by_ref();
+        }
+    }
 
+    pub async fn req(&self, req: Request) -> Result<Response> {
         let req = Arc::new(req);
 
         let request_id = RequestId(
@@ -303,17 +318,9 @@ impl Client {
 
         log::debug!("request {} is scheduled", request_id);
 
-        for (_, (waker_option, _)) in self
-            .state
-            .load()
-            .idle_connections
-            .iter()
-            .filter(|(_, (_, x))| x == &ConnectionBusiness::Idle)
-        {
-            if let Some(waker) = waker_option {
-                waker.wake_by_ref();
-            }
-        }
+        self.add_connection_if_undeflow().await?;
+
+        self.wake_connection();
 
         ResponseFuture {
             request_id,
@@ -329,25 +336,86 @@ impl Client {
         });
     }
 
+    async fn reopen_connections(&self) {
+        match self.add_connection_if_undeflow().await {
+            Ok(()) => {
+                self.wake_connection();
+            }
+            Err(err) => {
+                self.state.rcu(move |s| {
+                    let mut s = (**s).clone();
+                    let kill_requests: Vec<RequestId> = s
+                        .requests
+                        .iter()
+                        .filter(|(_, tpl)| tpl.4.is_none())
+                        .map(|(id, _)| *id)
+                        .collect();
+
+                    for request_id in kill_requests {
+                        if let Some(tpl) = s.requests.get_mut(&request_id) {
+                            tpl.2 = Some(Arc::new(Mutex::new(Some(Err(err.clone())))));
+                        }
+                    }
+
+                    s
+                });
+            }
+        }
+    }
+
     async fn run_connection(&self, mut con: Connection) {
         let connection_id = con.0;
         loop {
-            let mut aw = AllocateWorkFuture {
-                connection_id,
-                client: &self,
-            }
-            .fuse();
+            let direct_waiting_id_option: Option<(Arc<Request>, RequestId)> = {
+                let old_state = self.state.rcu(move |s| {
+                    let mut s = (**s).clone();
+                    let request_id = s.longest_waiting_request_id();
+                    if let Some(id) = request_id {
+                        if let Some(tpl) = s.requests.get_mut(&id) {
+                            tpl.4 = Some(connection_id)
+                        } else {
+                            illegal_state(45)
+                        }
+                    }
+                    s
+                });
 
-            let mut te = ConnectionTerminationFuture {
-                con: &mut con,
-                started_at: Instant::now(),
-                timeout: self.config.connection_idle_timeout,
-            }
-            .fuse();
+                let id_option = old_state.longest_waiting_request_id();
+                if let Some(id) = id_option {
+                    if let Some(tpl) = old_state.requests.get(&id) {
+                        Some((tpl.1.clone(), id))
+                    } else {
+                        illegal_state(47)
+                    }
+                } else {
+                    None
+                }
+            };
 
-            let waiting_id_option: Option<(Arc<Request>, RequestId)> = futures::select! {
-              i = aw => Some(i),
-              _ = te => None,
+            ////////////////////////////////////////
+
+            let waiting_id_option: Option<(Arc<Request>, RequestId)> = {
+                if let Some(r) = direct_waiting_id_option {
+                    Some(r)
+                } else {
+                    let mut aw = AllocateWorkFuture {
+                        connection_id,
+                        client: &self,
+                    }
+                    .fuse();
+
+                    let mut te = ConnectionTerminationFuture {
+                        con: &mut con,
+                        started_at: Instant::now(),
+                        timeout: self.config.connection_idle_timeout,
+                    }
+                    .fuse();
+
+                    futures::select! {
+                      i = aw => Some(i),
+                      _ = te => None,
+                    }
+                }
             };
 
             ////////////////////////////////////////////////////////////
@@ -357,7 +425,7 @@ impl Client {
 
                 self.state.rcu(move |s| {
                     let mut s = (**s).clone();
-                    if let Some(tpl) = s.idle_connections.get_mut(&connection_id) {
+                    if let Some(tpl) = s.living_connections.get_mut(&connection_id) {
                         if tpl.1 != ConnectionBusiness::Idle {
                             illegal_state(23)
                         }
@@ -373,6 +441,29 @@ impl Client {
                     Err(err) => (Err(err), ConnectionState::Close),
                 };
 
+                let result: Result<Response> = match result {
+                    Ok(tpl) => Ok(tpl),
+                    Err(InternalRequestError::UnrecoverableError(err)) => Err(err),
+                    Err(InternalRequestError::ConnectionIsClosed) => {
+                        log::debug!("remote connection was closed during request, recovering..");
+
+                        self.state.rcu(move |s| {
+                            let mut s = (**s).clone();
+                            if let Some(tpl) = s.requests.get_mut(&request_id) {
+                                tpl.4 = None
+                            } else {
+                                illegal_state(30)
+                            }
+                            if s.living_connections.remove(&connection_id).is_none() {
+                                illegal_state(31)
+                            }
+                            s
+                        });
+                        self.reopen_connections().await;
+                        break;
+                    }
+                };
+
                 let result = Arc::new(Mutex::new(Some(result)));
 
                 let old_state = self.state.rcu(move |s| {
@@ -384,12 +475,12 @@ impl Client {
                     }
                     match cs {
                         ConnectionState::Close => {
-                            if s.idle_connections.remove(&connection_id).is_none() {
+                            if s.living_connections.remove(&connection_id).is_none() {
                                 illegal_state(20)
                             }
                         }
                         ConnectionState::KeepAlive => {
-                            if let Some(tpl) = s.idle_connections.get_mut(&connection_id) {
+                            if let Some(tpl) = s.living_connections.get_mut(&connection_id) {
                                 if tpl.1 != ConnectionBusiness::Working {
                                     illegal_state(22)
                                 }
@@ -414,6 +505,7 @@ impl Client {
                     ConnectionState::Close => {
                         log::debug!("closing connection/1 {}", connection_id);
                         drop(con);
+                        self.reopen_connections().await;
                         break;
                     }
                     ConnectionState::KeepAlive => {
@@ -423,7 +515,7 @@ impl Client {
             } else {
                 self.state.rcu(move |s| {
                     let mut s = (**s).clone();
-                    if s.idle_connections.remove(&connection_id).is_none() {
+                    if s.living_connections.remove(&connection_id).is_none() {
                         illegal_state(30)
                     }
                     s
@@ -431,6 +523,7 @@ impl Client {
 
                 log::debug!("closing connection/2 {}", connection_id);
                 drop(con);
+                self.reopen_connections().await;
                 break;
             }
         }
@@ -527,7 +620,7 @@ impl<'a> Future for AllocateWorkFuture<'a> {
                     illegal_state(15)
                 }
             }
-            if let Some(w) = s.idle_connections.get_mut(&connection_id) {
+            if let Some(w) = s.living_connections.get_mut(&connection_id) {
                 w.0 = Some(cx.waker().clone());
             } else {
                 illegal_state(16)

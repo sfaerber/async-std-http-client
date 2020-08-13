@@ -7,7 +7,7 @@ pub async fn write_request(
     rw: &mut Connection,
     req: &Request,
     config: &ClientConfig,
-) -> Result<()> {
+) -> InternalRequestResult<()> {
     //
 
     let mut default_headers = HeaderMap::new();
@@ -56,9 +56,9 @@ pub async fn write_request(
         },
     );
 
-    rw.1.write_all(&http_reg).await.map_err(|err| Error {
-        text: format!("lost connection while writing: {}", err),
-    })?;
+    rw.1.write_all(&http_reg)
+        .await
+        .map_err(|_| InternalRequestError::ConnectionIsClosed)?;
 
     Ok(())
 }

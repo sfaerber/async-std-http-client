@@ -12,7 +12,7 @@ pub async fn read_reponse(
     rw: &mut Connection,
     _config: &ClientConfig,
     started_at: Instant,
-) -> Result<(Response, ConnectionState)> {
+) -> InternalRequestResult<(Response, ConnectionState)> {
     log::debug!("starting to read response");
 
     let mut parser = HttpParser::new(HttpParserType::Response);
@@ -28,28 +28,40 @@ pub async fn read_reponse(
     };
 
     let mut buffer: [u8; 1024 * 64] = [0; 1024 * 64];
+    let mut loops: usize = 0;
 
     loop {
-        let bytes_read = rw.1.read(&mut buffer).await.map_err(|err| Error {
-            text: format!("lost connection while reading: {}", err),
+        let bytes_read = rw.1.read(&mut buffer).await.map_err(|err| {
+            if loops == 0 {
+                InternalRequestError::ConnectionIsClosed
+            } else {
+                InternalRequestError::UnrecoverableError(Error {
+                    text: format!("lost connection while reading: {}", err),
+                })
+            }
         })?;
 
         if bytes_read == 0 {
             // TODO: is this fine if we are in http 1.0-mode`?
-
-            return Err(Error {
-                text: format!("unepected EOF"),
+            return Err(if loops == 0 {
+                InternalRequestError::ConnectionIsClosed
+            } else {
+                InternalRequestError::UnrecoverableError(Error {
+                    text: format!("unepected EOF, loop: {}", loops),
+                })
             });
         }
 
         parser.execute(&mut cb, &buffer[..bytes_read]);
 
         if let Some(err) = cb.error {
-            return Err(err);
+            return Err(InternalRequestError::UnrecoverableError(err));
         }
 
         if cb.is_message_complete {
-            let response = cb.to_response()?;
+            let response = cb
+                .to_response()
+                .map_err(InternalRequestError::UnrecoverableError)?;
 
             let connection_state = if response
                 .headers
@@ -82,8 +94,13 @@ pub async fn read_reponse(
                 response.duration.as_millis(),
             );
 
+            if let Some(c) = response.headers.get(HeaderName::from_bytes(b"Keep-Alive").unwrap()) {
+                log::warn!("KEEP_ALIVE: {:?}", c);
+            }
+
             return Ok((response, ConnectionState::KeepAlive));
         }
+        loops += 1;
     }
 }
 
