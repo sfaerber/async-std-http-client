@@ -1,13 +1,16 @@
 use futures::{AsyncRead, AsyncWrite};
-use http::{header::HeaderName, status::StatusCode, HeaderMap, HeaderValue};
+use http::{
+    header::{HeaderName, AUTHORIZATION},
+    status::StatusCode,
+    HeaderMap, HeaderValue,
+};
 use std::time::Duration;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-
 pub enum InternalRequestError {
     ConnectionIsClosed,
-    UnrecoverableError(Error)
+    UnrecoverableError(Error),
 }
 
 pub type InternalRequestResult<T> = std::result::Result<T, InternalRequestError>;
@@ -91,7 +94,6 @@ impl ToPath for &&str {
     }
 }
 
-
 impl Request {
     pub fn get<P>(path: P) -> RequestBuilder
     where
@@ -158,6 +160,13 @@ impl RequestBuilder {
 
     pub fn with_header(&mut self, name: HeaderName, value: HeaderValue) -> &mut Self {
         self.headers.insert(name, value);
+        self
+    }
+
+    pub fn with_basic_auth(&mut self, username: &str, password: &str) -> &mut Self {
+        let payload = base64::encode(format!("{}:{}", username, password));
+        let payload = format!("Basic {}", payload);
+        self.headers.insert(AUTHORIZATION, payload.parse().unwrap());
         self
     }
 
