@@ -1,6 +1,6 @@
 use crate::model::*;
 use async_std::prelude::*;
-use http::header::{HeaderMap, HeaderName, /*ACCEPT_ENCODING,*/ HOST};
+use http::header::{HeaderMap, HeaderName, CONTENT_LENGTH, /*ACCEPT_ENCODING,*/ HOST};
 use std::collections::HashSet;
 
 pub async fn write_request(
@@ -12,6 +12,11 @@ pub async fn write_request(
 
     let mut default_headers = HeaderMap::new();
     default_headers.insert(HOST, config.host.parse().unwrap());
+
+    if let Some(body) = &req.body {
+        default_headers.insert(CONTENT_LENGTH, body.len().to_string().parse().unwrap());
+    }
+
     // default_headers.insert(ACCEPT_ENCODING, "br".parse().unwrap()); // no encoding for now
 
     let mut http_reg = Vec::with_capacity(2048);
@@ -59,6 +64,14 @@ pub async fn write_request(
     rw.1.write_all(&http_reg)
         .await
         .map_err(|_| InternalRequestError::ConnectionIsClosed)?;
+
+    if let Some(body) = &req.body {
+        rw.1.write_all(&body).await.map_err(|_| {
+            InternalRequestError::UnrecoverableError(Error {
+                text: "the connection was broken while sending the request body".into(),
+            })
+        })?;
+    }
 
     Ok(())
 }
