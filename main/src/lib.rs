@@ -15,7 +15,7 @@ use std::{pin::Pin, time::Duration};
 use url::Url;
 
 use crate::model::*;
-pub use crate::model::{Method, Request, Response};
+pub use crate::model::{Method, Request, RequestBuilder, Response};
 
 pub use http::header::*;
 pub use http::status::*;

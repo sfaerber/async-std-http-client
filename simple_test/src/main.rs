@@ -9,16 +9,15 @@ async fn test() {
         .build()
         .expect("could not build client");
 
-    let rs1 = client
-        .req(Request::get("/").build())
-        .await
-        .unwrap();
+    let rs1 = client.req(Request::get("/").build()).await.unwrap();
 
     log::info!("request 1 done, got {} bytes", rs1.body.len());
 
+    let mut builder: RequestBuilder = Request::get("static/styles/solarized-dark.css");
+
     let rs2 = client
         .req(
-            Request::get("static/styles/solarized-dark.css")
+            builder
                 .with_header(USER_AGENT, HeaderValue::from_bytes(b"test").unwrap())
                 .build(),
         )
@@ -29,10 +28,7 @@ async fn test() {
 
     task::sleep(Duration::from_secs(1)).await;
 
-    let rs3 = client
-        .req(Request::get("what/cli").build())
-        .await
-        .unwrap();
+    let rs3 = client.req(Request::get("what/cli").build()).await.unwrap();
 
     log::info!("request 3 done, got {} bytes", rs3.body.len());
 
