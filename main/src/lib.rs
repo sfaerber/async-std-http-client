@@ -30,6 +30,7 @@ pub struct Builder {
     max_connections: usize,
     connection_idle_timeout: Duration,
     connect_timeout: Duration,
+    request_timeout: Duration,
 }
 
 impl Builder {
@@ -40,6 +41,16 @@ impl Builder {
 
     pub fn connection_idle_timeout(&mut self, connection_idle_timeout: Duration) -> &mut Self {
         self.connection_idle_timeout = connection_idle_timeout;
+        self
+    }
+
+    pub fn request_timeout(&mut self, request_timeout: Duration) -> &mut Self {
+        self.request_timeout = request_timeout;
+        self
+    }
+
+    pub fn connect_timeout(&mut self, connect_timeout: Duration) -> &mut Self {
+        self.connect_timeout = connect_timeout;
         self
     }
 
@@ -88,6 +99,7 @@ impl Builder {
             connection_idle_timeout: self.connection_idle_timeout,
             connect_timeout: self.connect_timeout,
             max_connections: self.max_connections,
+            request_timeout: self.request_timeout,
         };
 
         let state = ClientState {
@@ -186,12 +198,13 @@ impl Client {
         Builder {
             base_url: base_url.to_string(),
             max_connections: 10,
-            connection_idle_timeout: Duration::from_secs(10),
+            connection_idle_timeout: Duration::from_secs(5),
             connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(10),
         }
     }
 
-    async fn connect(&self) -> Result<Box<dyn AsyncReadWriter>> {
+    async fn connect_wihtout_timeout(&self) -> Result<Box<dyn AsyncReadWriter>> {
         //
         let config = &self.config;
 
@@ -221,14 +234,32 @@ impl Client {
         }
     }
 
+    async fn connect(&self) -> Result<Box<dyn AsyncReadWriter>> {
+        futures::select! {
+            r = self.connect_wihtout_timeout().fuse() => r,
+            _ = async_std::task::sleep(self.config.connect_timeout).fuse() =>
+                Err(Error {
+                    text: format!("connect timed out after {:?}", self.config.connect_timeout),
+                }),
+        }
+    }
+
     async fn req_internal(
         &self,
         con: &mut Connection,
         req: &Request,
     ) -> InternalRequestResult<(Response, ConnectionState)> {
-        let start = Instant::now();
-        write_request(con, &req, &self.config).await?;
-        read_reponse(con, &self.config, start).await
+        futures::select! {
+            r = async {
+                let start = Instant::now();
+                write_request(con, &req, &self.config).await?;
+                read_reponse(con, &self.config, start).await
+            }.fuse() => r,
+            _ = async_std::task::sleep(self.config.request_timeout).fuse() =>
+                Err(InternalRequestError::UnrecoverableError(Error {
+                    text: format!("request timed out after {:?}", self.config.request_timeout),
+                })),
+        }
     }
 
     async fn add_connection_if_undeflow(&self) -> Result<()> {
@@ -404,16 +435,10 @@ impl Client {
                     }
                     .fuse();
 
-                    let mut te = ConnectionTerminationFuture {
-                        con: &mut con,
-                        started_at: Instant::now(),
-                        timeout: self.config.connection_idle_timeout,
-                    }
-                    .fuse();
-
                     futures::select! {
                       i = aw => Some(i),
-                      _ = te => None,
+                      _ = ConnectionTerminationFuture { con: &mut con }.fuse() => None,
+                      _ = async_std::task::sleep(self.config.connection_idle_timeout).fuse() => None,
                     }
                 }
             };
@@ -645,14 +670,6 @@ impl<'a> Future for AllocateWorkFuture<'a> {
 
 struct ConnectionTerminationFuture<'a> {
     con: &'a mut Connection,
-    started_at: Instant,
-    timeout: Duration,
-}
-
-impl<'a> ConnectionTerminationFuture<'a> {
-    fn timed_out(&self) -> bool {
-        Instant::now() > self.started_at + self.timeout
-    }
 }
 
 impl<'a> Future for ConnectionTerminationFuture<'a> {
@@ -662,7 +679,6 @@ impl<'a> Future for ConnectionTerminationFuture<'a> {
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Self::Output> {
         use task::Poll::*;
-        let timed_out = self.timed_out();
         let mut buffer: [u8; 4096] = [0; 4096];
         match Pin::new(&mut self.get_mut().con.1).poll_read(cx, &mut buffer) {
             Ready(len) => {
@@ -672,7 +688,6 @@ impl<'a> Future for ConnectionTerminationFuture<'a> {
                 }
                 Ready(())
             }
-            Pending if timed_out => Ready(()),
             Pending => Pending,
         }
     }

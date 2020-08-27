@@ -234,6 +234,7 @@ pub struct ClientConfig {
     pub connection_idle_timeout: Duration,
     pub connect_timeout: Duration,
     pub max_connections: usize,
+    pub request_timeout: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
