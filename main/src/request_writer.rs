@@ -1,6 +1,8 @@
 use crate::model::*;
 use async_std::prelude::*;
+use encoding::EncodingRef;
 use http::header::{HeaderMap, HeaderName, CONTENT_LENGTH, /*ACCEPT_ENCODING,*/ HOST};
+use smallvec::{smallvec, SmallVec};
 use std::collections::HashSet;
 
 pub async fn write_request(
@@ -19,16 +21,38 @@ pub async fn write_request(
 
     // default_headers.insert(ACCEPT_ENCODING, "br".parse().unwrap()); // no encoding for now
 
-    let mut http_reg = Vec::with_capacity(2048);
+    let mut http_reg: Vec<u8> = Vec::with_capacity(2048);
+
+    let write_url_encoded = |text: &str,
+                             do_not_eacape: SmallVec<[char; 5]>|
+     -> std::result::Result<Vec<u8>, InternalRequestError> {
+        url_encode(text, config.url_encoding, do_not_eacape).map_err(|_| {
+            InternalRequestError::UnrecoverableError(Error {
+                text: format!("unable to do url encoding for text '{}'", text),
+            })
+        })
+    };
 
     http_reg.extend(req.method.to_str().as_bytes());
     http_reg.extend(b" ");
     http_reg.extend(config.url_prefix.as_bytes());
     http_reg.extend(if req.path.starts_with("/") {
-        req.path[1..].as_bytes()
+        write_url_encoded(&req.path[1..], smallvec!['/'])?
     } else {
-        req.path[0..].as_bytes()
+        write_url_encoded(&req.path[0..], smallvec!['/'])?
     });
+
+    if req.request_args.len() > 0 {
+        http_reg.extend(b"?");
+        for (n, (name, value)) in req.request_args.iter().enumerate() {
+            http_reg.extend(write_url_encoded(name, smallvec![])?);
+            http_reg.extend(b"=");
+            http_reg.extend(write_url_encoded(value, smallvec![])?);
+            if n < req.request_args.len() - 1 {
+                http_reg.extend(b"&");
+            }
+        }
+    }
     http_reg.extend(b" HTTP/1.1\r\n");
 
     let req_header_names: HashSet<&HeaderName> = req.headers.iter().map(|(n, _)| n).collect();
@@ -46,6 +70,8 @@ pub async fn write_request(
     }
 
     http_reg.extend(b"\r\n");
+
+    log::trace!("http head:\n{}", String::from_utf8_lossy(&http_reg));
 
     log::debug!(
         "sending {} to '{}://{}:{}{}{}'",
@@ -74,4 +100,57 @@ pub async fn write_request(
     }
 
     Ok(())
+}
+
+fn url_encode(
+    data: &str,
+    encoding: EncodingRef,
+    do_not_esacape: SmallVec<[char; 5]>,
+) -> std::result::Result<Vec<u8>, ()> {
+    use encoding::EncoderTrap;
+    let mut result: Vec<u8> = Vec::new();
+    for b in data.chars() {
+        match b {
+            // Accepted characters
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => {
+                result.extend(b.to_string().as_bytes())
+            }
+
+            // Everything else is percent-encoded
+            b => {
+                if do_not_esacape.contains(&b) {
+                    result.extend(b.to_string().as_bytes())
+                } else {
+                    let bytes = encoding
+                        .encode(&b.to_string(), EncoderTrap::Strict)
+                        .map_err(|_| ())?;
+                    for b in bytes {
+                        result.extend(format!("%{:02X}", b as u32).as_bytes())
+                    }
+                }
+            }
+        };
+    }
+
+    Ok(result)
+}
+
+#[test]
+fn it_works() {
+    fn test_encode(data: &str, encoding: EncodingRef) -> String {
+        String::from_utf8_lossy(&url_encode(data, encoding, SmallVec::new()).unwrap()).into()
+    }
+
+    assert_eq!(
+        &test_encode("m üöä", encoding::all::ISO_8859_1),
+        "m%20%FC%F6%E4"
+    );
+    assert_eq!(
+        &test_encode("m üöä", encoding::all::UTF_8),
+        "m%20%C3%BC%C3%B6%C3%A4"
+    );
+    assert_eq!(
+        &test_encode("Привет мир", encoding::all::UTF_8),
+        "%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82%20%D0%BC%D0%B8%D1%80"
+    );
 }

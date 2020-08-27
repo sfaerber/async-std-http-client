@@ -1,3 +1,4 @@
+use encoding::EncodingRef;
 use futures::{AsyncRead, AsyncWrite};
 use http::{
     header::{HeaderName, AUTHORIZATION},
@@ -63,6 +64,7 @@ pub struct Request {
     pub(crate) path: String,
     pub(crate) body: Option<Vec<u8>>,
     pub(crate) headers: http::HeaderMap,
+    pub(crate) request_args: Vec<(String, String)>,
 }
 
 pub struct RequestBuilder {
@@ -70,26 +72,27 @@ pub struct RequestBuilder {
     pub(crate) path: String,
     pub(crate) body: Option<Vec<u8>>,
     pub(crate) headers: http::HeaderMap,
+    pub(crate) request_args: Vec<(String, String)>,
 }
 
-pub trait ToPath {
-    fn to_path(self) -> String;
+pub trait ToRequestPartString {
+    fn to_owned_string(self) -> String;
 }
 
-impl ToPath for String {
-    fn to_path(self) -> String {
+impl ToRequestPartString for String {
+    fn to_owned_string(self) -> String {
         self
     }
 }
 
-impl ToPath for &str {
-    fn to_path(self) -> String {
+impl ToRequestPartString for &str {
+    fn to_owned_string(self) -> String {
         self.to_string()
     }
 }
 
-impl ToPath for &&str {
-    fn to_path(self) -> String {
+impl ToRequestPartString for &&str {
+    fn to_owned_string(self) -> String {
         self.to_string()
     }
 }
@@ -97,41 +100,42 @@ impl ToPath for &&str {
 impl Request {
     pub fn get<P>(path: P) -> RequestBuilder
     where
-        P: ToPath,
+        P: ToRequestPartString,
     {
         Self::build(Method::Get, path)
     }
 
     pub fn post<P>(path: P) -> RequestBuilder
     where
-        P: ToPath,
+        P: ToRequestPartString,
     {
         Self::build(Method::Post, path)
     }
 
     pub fn put<P>(path: P) -> RequestBuilder
     where
-        P: ToPath,
+        P: ToRequestPartString,
     {
         Self::build(Method::Put, path)
     }
 
     pub fn delete<P>(path: P) -> RequestBuilder
     where
-        P: ToPath,
+        P: ToRequestPartString,
     {
         Self::build(Method::Get, path)
     }
 
     pub fn build<P>(method: Method, path: P) -> RequestBuilder
     where
-        P: ToPath,
+        P: ToRequestPartString,
     {
         RequestBuilder {
             method,
-            path: path.to_path(),
+            path: path.to_owned_string(),
             body: None,
             headers: http::HeaderMap::new(),
+            request_args: Vec::new(),
         }
     }
 
@@ -170,6 +174,27 @@ impl RequestBuilder {
         self
     }
 
+    pub fn with_request_args<N, V, I: IntoIterator<Item = (N, V)>>(&mut self, args: I) -> &mut Self
+    where
+        N: ToRequestPartString,
+        V: ToRequestPartString,
+    {
+        for (n, v) in args.into_iter() {
+            self.with_request_arg(n, v);
+        }
+        self
+    }
+
+    pub fn with_request_arg<N, V>(&mut self, name: N, value: V) -> &mut Self
+    where
+        N: ToRequestPartString,
+        V: ToRequestPartString,
+    {
+        self.request_args
+            .push((name.to_owned_string(), value.to_owned_string()));
+        self
+    }
+
     pub fn build(&mut self) -> Request {
         //
         let mut result = Request {
@@ -177,11 +202,13 @@ impl RequestBuilder {
             path: String::new(),
             body: None,
             headers: HeaderMap::new(),
+            request_args: Vec::new(),
         };
 
         std::mem::swap(&mut result.path, &mut self.path);
         std::mem::swap(&mut result.body, &mut self.body);
         std::mem::swap(&mut result.headers, &mut self.headers);
+        std::mem::swap(&mut result.request_args, &mut self.request_args);
 
         result
     }
@@ -225,7 +252,6 @@ impl Method {
 //     Protobuf(Box<dyn prost::Message>),
 // }
 
-#[derive(Debug)]
 pub struct ClientConfig {
     pub use_tls: bool,
     pub host: String,
@@ -235,6 +261,7 @@ pub struct ClientConfig {
     pub connect_timeout: Duration,
     pub max_connections: usize,
     pub request_timeout: Duration,
+    pub url_encoding: EncodingRef,
 }
 
 #[derive(Debug, Clone, Copy)]

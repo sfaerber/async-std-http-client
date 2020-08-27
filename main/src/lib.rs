@@ -23,6 +23,7 @@ use task::Waker;
 
 use futures::future::FutureExt;
 use std::sync::Mutex;
+use encoding::EncodingRef;
 
 #[derive(Clone)]
 pub struct Builder {
@@ -31,6 +32,7 @@ pub struct Builder {
     connection_idle_timeout: Duration,
     connect_timeout: Duration,
     request_timeout: Duration,
+    url_encoding: EncodingRef,
 }
 
 impl Builder {
@@ -51,6 +53,11 @@ impl Builder {
 
     pub fn connect_timeout(&mut self, connect_timeout: Duration) -> &mut Self {
         self.connect_timeout = connect_timeout;
+        self
+    }
+
+    pub fn url_encoding(&mut self, url_encoding: EncodingRef) -> &mut Self {
+        self.url_encoding = url_encoding;
         self
     }
 
@@ -95,11 +102,12 @@ impl Builder {
             use_tls,
             host,
             port,
-            url_prefix: url.path().to_string(),
+            url_prefix: url.path().to_owned_string(),
             connection_idle_timeout: self.connection_idle_timeout,
             connect_timeout: self.connect_timeout,
             max_connections: self.max_connections,
             request_timeout: self.request_timeout,
+            url_encoding: self.url_encoding,
         };
 
         let state = ClientState {
@@ -110,7 +118,7 @@ impl Builder {
             request_counter: 0,
         };
 
-        log::info!("builded client wiht config: {:?}", &config);
+        //log::info!("builded client wiht config: {:?}", &config);
 
         Ok(Client {
             state: Arc::new(ArcSwap::new(Arc::new(state))),
@@ -196,11 +204,12 @@ impl Client {
 
     pub fn builder(base_url: &str) -> Builder {
         Builder {
-            base_url: base_url.to_string(),
+            base_url: base_url.to_owned_string(),
             max_connections: 10,
             connection_idle_timeout: Duration::from_secs(5),
             connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(10),
+            url_encoding: encoding::all::UTF_8,
         }
     }
 
@@ -616,7 +625,7 @@ impl<'a> Future for ResponseFuture<'a> {
                 task::Poll::Ready(Ok(result)) =>
                     format!("got {}, {} bytes ", result.status, result.body.len()),
                 task::Poll::Ready(Err(err)) => format!("got error: {}", err),
-                task::Poll::Pending => "Pending".to_string(),
+                task::Poll::Pending => "Pending".to_owned_string(),
             }
         );
 

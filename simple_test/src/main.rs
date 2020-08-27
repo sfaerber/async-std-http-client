@@ -28,7 +28,14 @@ async fn test() {
 
     task::sleep(Duration::from_secs(1)).await;
 
-    let rs3 = client.req(Request::get("what/cli").build()).await.unwrap();
+    let rs3 = client
+        .req(
+            Request::get("what/cli")
+                .with_request_args(vec![("öüpooui", "qwdhiuqwd"), ("h huqwd", "öäü")])
+                .build(),
+        )
+        .await
+        .unwrap();
 
     log::info!("request 3 done, got {} bytes", rs3.body.len());
 
@@ -36,6 +43,6 @@ async fn test() {
 }
 
 fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    simple_logger::init_with_level(log::Level::Trace).unwrap();
     task::block_on(test())
 }
