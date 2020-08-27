@@ -1,7 +1,7 @@
 use crate::model::*;
 use async_std::prelude::*;
 use encoding::EncodingRef;
-use http::header::{HeaderMap, HeaderName, CONTENT_LENGTH, /*ACCEPT_ENCODING,*/ HOST};
+use http::header::{HeaderMap, HeaderName, CONTENT_LENGTH, ACCEPT_ENCODING, HOST};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashSet;
 
@@ -14,6 +14,7 @@ pub async fn write_request(
 
     let mut default_headers = HeaderMap::new();
     default_headers.insert(HOST, config.host.parse().unwrap());
+    default_headers.insert(ACCEPT_ENCODING, "gzip".parse().unwrap());
 
     if let Some(body) = &req.body {
         default_headers.insert(CONTENT_LENGTH, body.len().to_string().parse().unwrap());

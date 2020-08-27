@@ -262,6 +262,7 @@ pub struct ClientConfig {
     pub max_connections: usize,
     pub request_timeout: Duration,
     pub url_encoding: EncodingRef,
+    pub response_body_limit: usize,
 }
 
 #[derive(Debug, Clone, Copy)]

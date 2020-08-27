@@ -3,7 +3,7 @@ mod request_writer;
 mod response_parser;
 
 use crate::request_writer::write_request;
-use crate::response_parser::read_reponse;
+use crate::response_parser::read_response;
 use arc_swap::ArcSwap;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
@@ -108,6 +108,7 @@ impl Builder {
             max_connections: self.max_connections,
             request_timeout: self.request_timeout,
             url_encoding: self.url_encoding,
+            response_body_limit: 1024 * 1024 * 100, // limit of 100MB for now
         };
 
         let state = ClientState {
@@ -262,7 +263,7 @@ impl Client {
             r = async {
                 let start = Instant::now();
                 write_request(con, &req, &self.config).await?;
-                read_reponse(con, &self.config, start).await
+                read_response(con, &self.config, start).await
             }.fuse() => r,
             _ = async_std::task::sleep(self.config.request_timeout).fuse() =>
                 Err(InternalRequestError::UnrecoverableError(Error {

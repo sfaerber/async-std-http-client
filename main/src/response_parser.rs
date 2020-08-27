@@ -1,16 +1,18 @@
 use crate::model::*;
 use async_std::prelude::*;
 use http::{
-    header::{HeaderName, CONNECTION /*, CONTENT_LENGTH*/},
+    header::{HeaderName, CONNECTION /*, CONTENT_LENGTH*/, CONTENT_ENCODING},
     status::StatusCode,
     HeaderMap, HeaderValue,
 };
 use http_parser::*;
+use libflate::gzip::Decoder;
+use std::io;
 use std::time::Instant;
 
-pub async fn read_reponse(
+pub async fn read_response(
     rw: &mut Connection,
-    _config: &ClientConfig,
+    config: &ClientConfig,
     started_at: Instant,
 ) -> InternalRequestResult<(Response, ConnectionState)> {
     log::debug!("starting to read response");
@@ -60,7 +62,7 @@ pub async fn read_reponse(
 
         if cb.is_message_complete {
             let response = cb
-                .to_response()
+                .to_response(config.response_body_limit)
                 .map_err(InternalRequestError::UnrecoverableError)?;
 
             let connection_state = if response
@@ -94,7 +96,10 @@ pub async fn read_reponse(
                 response.duration.as_millis(),
             );
 
-            if let Some(c) = response.headers.get(HeaderName::from_bytes(b"Keep-Alive").unwrap()) {
+            if let Some(c) = response
+                .headers
+                .get(HeaderName::from_bytes(b"Keep-Alive").unwrap())
+            {
                 log::warn!("KEEP_ALIVE: {:?}", c);
             }
 
@@ -115,7 +120,7 @@ struct Callback {
 }
 
 impl Callback {
-    fn to_response(mut self) -> Result<Response> {
+    fn to_response(mut self, _reponse_body_limit: usize) -> Result<Response> {
         match self.status {
             Some(status) => {
                 let mut response = Response {
@@ -128,7 +133,37 @@ impl Callback {
                 std::mem::swap(&mut response.headers, &mut self.headers);
 
                 if self.body.len() > 0 {
-                    std::mem::swap(&mut response.body, &mut self.body);
+                    match response
+                        .headers
+                        .get(CONTENT_ENCODING)
+                        .iter()
+                        .flat_map(|v| v.to_str().ok())
+                        .next()
+                    {
+                        None | Some("identity") => {
+                            std::mem::swap(&mut response.body, &mut self.body);
+                        }
+                        Some("gzip") => {
+                            let err = |err| Error {
+                                text: format!(
+                                    "could not uncompress gzip compressed response body: {}",
+                                    err,
+                                ),
+                            };
+                            let mut decoder = Decoder::new(&self.body[..]).map_err(err)?;
+                            io::copy(&mut decoder, &mut response.body).map_err(err)?;
+                            log::debug!(
+                                "decompressing: {} ==> {}",
+                                self.body.len(),
+                                response.body.len()
+                            );
+                        }
+                        Some(encoding) => {
+                            return Err(Error {
+                                text: format!("got unexpected encoding '{}'", encoding),
+                            })
+                        }
+                    }
                 }
 
                 Ok(response)
