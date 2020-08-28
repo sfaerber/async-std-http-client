@@ -36,7 +36,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn connection_count(&mut self, max_connections: usize) -> &mut Self {
+    pub fn max_connections(&mut self, max_connections: usize) -> &mut Self {
         self.max_connections = max_connections;
         self
     }
