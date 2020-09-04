@@ -221,6 +221,7 @@ impl RequestBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct Response {
     pub status: StatusCode,
     pub body: Vec<u8>,
