@@ -175,8 +175,7 @@ impl RequestBuilder {
     }
 
     pub fn with_bearer_token(&mut self, token: &str) -> &mut Self {
-        let payload = base64::encode(token);
-        let payload = format!("Bearer {}", payload);
+        let payload = format!("Bearer {}", token);
         self.headers.insert(AUTHORIZATION, payload.parse().unwrap());
         self
     }
