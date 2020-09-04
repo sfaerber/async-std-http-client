@@ -174,6 +174,13 @@ impl RequestBuilder {
         self
     }
 
+    pub fn with_bearer_token(&mut self, token: &str) -> &mut Self {
+        let payload = base64::encode(token);
+        let payload = format!("Bearer {}", payload);
+        self.headers.insert(AUTHORIZATION, payload.parse().unwrap());
+        self
+    }
+
     pub fn with_request_args<N, V, I: IntoIterator<Item = (N, V)>>(&mut self, args: I) -> &mut Self
     where
         N: ToRequestPartString,
@@ -214,6 +221,7 @@ impl RequestBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct Response {
     pub status: StatusCode,
     pub body: Vec<u8>,
