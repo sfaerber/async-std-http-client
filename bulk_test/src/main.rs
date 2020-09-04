@@ -6,7 +6,7 @@ const REQUESTS: usize = 1000;
 
 async fn test() {
     let client = Client::builder("http://host.docker.internal:80/")
-        .connection_count(25)
+        .max_connections(25)
         .request_timeout(Duration::from_millis(1000))
         .connect_timeout(Duration::from_millis(1000))
         .build()

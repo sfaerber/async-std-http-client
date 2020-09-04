@@ -229,7 +229,10 @@ impl HttpParserCallback for Callback {
         Ok(ParseAction::None)
     }
 
-    fn on_headers_complete(&mut self, _parser: &mut HttpParser) -> CallbackResult {
+    fn on_headers_complete(&mut self, parser: &mut HttpParser) -> CallbackResult {
+        if self.status.is_none() {
+            self.status = parser.status_code.iter().flat_map(|s| StatusCode::from_u16(*s)).next();
+        }
         Ok(ParseAction::None)
     }
 
