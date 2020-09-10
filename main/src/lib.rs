@@ -21,9 +21,9 @@ pub use http::header::*;
 pub use http::status::*;
 use task::Waker;
 
+use encoding::EncodingRef;
 use futures::future::FutureExt;
 use std::sync::Mutex;
-use encoding::EncodingRef;
 
 #[derive(Clone)]
 pub struct Builder {
@@ -147,6 +147,7 @@ struct ClientState {
             Option<Arc<Mutex<Option<Result<Response>>>>>,
             Option<Waker>,
             Option<ConnectionId>,
+            i16,
         ),
     >,
     request_counter: u64,
@@ -161,7 +162,7 @@ impl ClientState {
         self.requests
             .iter()
             .rev()
-            .filter(|(_, (_, _, _, _, c))| c.is_none())
+            .filter(|(_, (_, _, _, _, c, _))| c.is_none())
             .map(|(id, _)| *id)
             .next()
     }
@@ -179,6 +180,8 @@ pub struct Client {
     state: Arc<ArcSwap<ClientState>>,
     config: Arc<ClientConfig>,
 }
+
+const MAX_REPETITIONS: i16 = 5;
 
 impl Client {
     pub fn print_internal_state(&self) -> String {
@@ -345,7 +348,7 @@ impl Client {
                     if s.requests
                         .insert(
                             RequestId(s.request_counter),
-                            (Instant::now(), req.clone(), None, None, None),
+                            (Instant::now(), req.clone(), None, None, None, -1),
                         )
                         .is_some()
                     {
@@ -407,7 +410,7 @@ impl Client {
     async fn run_connection(&self, mut con: Connection) {
         let connection_id = con.0;
         loop {
-            let direct_waiting_id_option: Option<(Arc<Request>, RequestId)> = {
+            let direct_waiting_id_option: Option<(Arc<Request>, RequestId, bool)> = {
                 let old_state = self.state.rcu(move |s| {
                     let mut s = (**s).clone();
                     let request_id = s.longest_waiting_request_id();
@@ -424,7 +427,7 @@ impl Client {
                 let id_option = old_state.longest_waiting_request_id();
                 if let Some(id) = id_option {
                     if let Some(tpl) = old_state.requests.get(&id) {
-                        Some((tpl.1.clone(), id))
+                        Some((tpl.1.clone(), id, tpl.5 < MAX_REPETITIONS))
                     } else {
                         illegal_state(47)
                     }
@@ -435,7 +438,7 @@ impl Client {
 
             ////////////////////////////////////////
 
-            let waiting_id_option: Option<(Arc<Request>, RequestId)> = {
+            let waiting_id_option: Option<(Arc<Request>, RequestId, bool)> = {
                 if let Some(r) = direct_waiting_id_option {
                     Some(r)
                 } else {
@@ -455,7 +458,7 @@ impl Client {
 
             ////////////////////////////////////////////////////////////
 
-            if let Some((req, request_id)) = waiting_id_option {
+            if let Some((req, request_id, repeat_allowed)) = waiting_id_option {
                 log::debug!("doing {} in {}", request_id, connection_id);
 
                 self.state.rcu(move |s| {
@@ -479,13 +482,14 @@ impl Client {
                 let result: Result<Response> = match result {
                     Ok(tpl) => Ok(tpl),
                     Err(InternalRequestError::UnrecoverableError(err)) => Err(err),
-                    Err(InternalRequestError::ConnectionIsClosed) => {
+                    Err(InternalRequestError::ConnectionIsClosed) if repeat_allowed => {
                         log::debug!("remote connection was closed during request, recovering..");
 
                         self.state.rcu(move |s| {
                             let mut s = (**s).clone();
                             if let Some(tpl) = s.requests.get_mut(&request_id) {
-                                tpl.4 = None
+                                tpl.4 = None;
+                                tpl.5 += 1; // increment retry counter
                             } else {
                                 illegal_state(30)
                             }
@@ -496,6 +500,12 @@ impl Client {
                         });
                         self.reopen_connections().await;
                         break;
+                    }
+                    Err(InternalRequestError::ConnectionIsClosed) => { 
+                        Err(Error { text : format!(
+                            "the underlying connection was unexpectedly closed and the maximum retry count of {} was exceeded", 
+                            MAX_REPETITIONS)
+                        })
                     }
                 };
 
@@ -642,7 +652,7 @@ struct AllocateWorkFuture<'a> {
 }
 
 impl<'a> Future for AllocateWorkFuture<'a> {
-    type Output = (Arc<Request>, RequestId);
+    type Output = (Arc<Request>, RequestId, bool);
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> task::Poll<Self::Output> {
         let connection_id = self.connection_id;
         let old_state = self.client.state.rcu(move |s| {
@@ -666,7 +676,7 @@ impl<'a> Future for AllocateWorkFuture<'a> {
         let id_option = old_state.longest_waiting_request_id();
         if let Some(id) = id_option {
             if let Some(tpl) = old_state.requests.get(&id) {
-                task::Poll::Ready((tpl.1.clone(), id))
+                task::Poll::Ready((tpl.1.clone(), id, tpl.5 < MAX_REPETITIONS))
             } else {
                 illegal_state(17)
             }
