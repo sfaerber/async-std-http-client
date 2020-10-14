@@ -126,6 +126,13 @@ impl Request {
         Self::build(Method::Get, path)
     }
 
+    pub fn patch<P>(path: P) -> RequestBuilder
+    where
+        P: ToRequestPartString,
+    {
+        Self::build(Method::Patch, path)
+    }
+
     pub fn build<P>(method: Method, path: P) -> RequestBuilder
     where
         P: ToRequestPartString,
@@ -238,7 +245,7 @@ pub enum Method {
     //Head,
     //Trace,
     //Connect,
-    //Patch,
+    Patch,
 }
 
 impl Method {
@@ -249,6 +256,7 @@ impl Method {
             Post => "POST",
             Delete => "DELETE",
             Put => "PUT",
+            Patch => "PATCH"
         }
     }
 }
