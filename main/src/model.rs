@@ -278,6 +278,7 @@ pub struct ClientConfig {
     pub request_timeout: Duration,
     pub url_encoding: EncodingRef,
     pub response_body_limit: usize,
+    pub leave_content_encoded: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

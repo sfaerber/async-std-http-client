@@ -62,7 +62,7 @@ pub async fn read_response(
 
         if cb.is_message_complete {
             let response = cb
-                .to_response(config.response_body_limit)
+                .to_response(config.response_body_limit, config.leave_content_encoded)
                 .map_err(InternalRequestError::UnrecoverableError)?;
 
             let connection_state = if response
@@ -120,7 +120,11 @@ struct Callback {
 }
 
 impl Callback {
-    fn to_response(mut self, _reponse_body_limit: usize) -> Result<Response> {
+    fn to_response(
+        mut self,
+        _reponse_body_limit: usize,
+        leave_content_encoded: bool,
+    ) -> Result<Response> {
         match self.status {
             Some(status) => {
                 let mut response = Response {
@@ -138,6 +142,7 @@ impl Callback {
                         .get(CONTENT_ENCODING)
                         .iter()
                         .flat_map(|v| v.to_str().ok())
+                        .filter(|_| !leave_content_encoded)
                         .next()
                     {
                         None | Some("identity") => {
@@ -231,7 +236,11 @@ impl HttpParserCallback for Callback {
 
     fn on_headers_complete(&mut self, parser: &mut HttpParser) -> CallbackResult {
         if self.status.is_none() {
-            self.status = parser.status_code.iter().flat_map(|s| StatusCode::from_u16(*s)).next();
+            self.status = parser
+                .status_code
+                .iter()
+                .flat_map(|s| StatusCode::from_u16(*s))
+                .next();
         }
         Ok(ParseAction::None)
     }
