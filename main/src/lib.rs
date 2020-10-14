@@ -34,6 +34,7 @@ pub struct Builder {
     request_timeout: Duration,
     url_encoding: EncodingRef,
     leave_content_encoded: bool,
+    do_url_encoding: bool,
 }
 
 impl Builder {
@@ -64,6 +65,11 @@ impl Builder {
 
     pub fn leave_content_encoded(&mut self, leave_content_encoded: bool) -> &mut Self {
         self.leave_content_encoded = leave_content_encoded;
+        self
+    }
+
+    pub fn do_url_encoding(&mut self, do_url_encoding: bool) -> &mut Self {
+        self.do_url_encoding = do_url_encoding;
         self
     }
 
@@ -116,6 +122,7 @@ impl Builder {
             url_encoding: self.url_encoding,
             response_body_limit: 1024 * 1024 * 100, // limit of 100MB for now
             leave_content_encoded: self.leave_content_encoded,
+            do_url_encoding: self.do_url_encoding,
         };
 
         let state = ClientState {
@@ -222,6 +229,7 @@ impl Client {
             request_timeout: Duration::from_secs(10),
             url_encoding: encoding::all::UTF_8,
             leave_content_encoded: false,
+            do_url_encoding: true,
         }
     }
 

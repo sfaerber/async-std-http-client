@@ -1,7 +1,7 @@
 use crate::model::*;
 use async_std::prelude::*;
 use encoding::EncodingRef;
-use http::header::{HeaderMap, HeaderName, CONTENT_LENGTH, ACCEPT_ENCODING, HOST};
+use http::header::{HeaderMap, HeaderName, ACCEPT_ENCODING, CONTENT_LENGTH, HOST};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashSet;
 
@@ -38,17 +38,33 @@ pub async fn write_request(
     http_reg.extend(b" ");
     http_reg.extend(config.url_prefix.as_bytes());
     http_reg.extend(if req.path.starts_with("/") {
-        write_url_encoded(&req.path[1..], smallvec!['/'])?
+        if config.do_url_encoding {
+            write_url_encoded(&req.path[1..], smallvec!['/'])?
+        } else {
+            req.path[1..].as_bytes().to_vec()
+        }
     } else {
-        write_url_encoded(&req.path[0..], smallvec!['/'])?
+        if config.do_url_encoding {
+            write_url_encoded(&req.path[0..], smallvec!['/'])?
+        } else {
+            req.path[0..].as_bytes().to_vec()
+        }
     });
 
     if req.request_args.len() > 0 {
         http_reg.extend(b"?");
         for (n, (name, value)) in req.request_args.iter().enumerate() {
-            http_reg.extend(write_url_encoded(name, smallvec![])?);
+            http_reg.extend(if config.do_url_encoding {
+                write_url_encoded(name, smallvec![])?
+            } else {
+                name.as_bytes().to_vec()
+            });
             http_reg.extend(b"=");
-            http_reg.extend(write_url_encoded(value, smallvec![])?);
+            http_reg.extend(if config.do_url_encoding {
+                write_url_encoded(value, smallvec![])?
+            } else {
+                value.as_bytes().to_vec()
+            });
             if n < req.request_args.len() - 1 {
                 http_reg.extend(b"&");
             }

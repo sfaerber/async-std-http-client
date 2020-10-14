@@ -279,6 +279,7 @@ pub struct ClientConfig {
     pub url_encoding: EncodingRef,
     pub response_body_limit: usize,
     pub leave_content_encoded: bool,
+    pub do_url_encoding: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
