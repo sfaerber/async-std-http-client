@@ -271,7 +271,11 @@ impl Client {
                 .connect(&config.host, tcp_stream)
                 .await
                 .map_err(|err| Error {
-                    text: format!("could not etablish TLS connection: {}", err),
+                    text: format!(
+                        "could not etablish TLS connection [accept_invalid_cert={}]: {}",
+                        self.config.accept_invalid_cert,
+                        err
+                    ),
                 })?;
 
             Ok(Box::new(tls_stream))
@@ -403,7 +407,7 @@ impl Client {
             request_id,
             client: &self,
         }
-        .await
+            .await
     }
 
     fn spawn_connection(&self, con: Connection) {
@@ -479,7 +483,7 @@ impl Client {
                         connection_id,
                         client: &self,
                     }
-                    .fuse();
+                        .fuse();
 
                     futures::select! {
                       i = aw => Some(i),
@@ -534,9 +538,9 @@ impl Client {
                         self.reopen_connections().await;
                         break;
                     }
-                    Err(InternalRequestError::ConnectionIsClosed) => 
+                    Err(InternalRequestError::ConnectionIsClosed) =>
                         Err(Error { text : format!(
-                            "the underlying connection was unexpectedly closed and the maximum retry count of {} was exceeded", 
+                            "the underlying connection was unexpectedly closed and the maximum retry count of {} was exceeded",
                             MAX_REPETITIONS)
                         })
                 };
@@ -771,6 +775,7 @@ mod danger {
             _dns_name: webpki::DNSNameRef<'_>,
             _ocsp: &[u8],
         ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
+            log::debug!("building tls connection without cert verification");
             Ok(rustls::ServerCertVerified::assertion())
         }
     }
