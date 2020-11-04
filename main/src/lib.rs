@@ -35,6 +35,7 @@ pub struct Builder {
     url_encoding: EncodingRef,
     leave_content_encoded: bool,
     do_url_encoding: bool,
+    accept_invalid_cert: bool,
 }
 
 impl Builder {
@@ -70,6 +71,11 @@ impl Builder {
 
     pub fn do_url_encoding(&mut self, do_url_encoding: bool) -> &mut Self {
         self.do_url_encoding = do_url_encoding;
+        self
+    }
+
+    pub fn accept_invalid_cert(&mut self, accept_invalid_cert: bool) -> &mut Self {
+        self.accept_invalid_cert = accept_invalid_cert;
         self
     }
 
@@ -123,6 +129,7 @@ impl Builder {
             response_body_limit: 1024 * 1024 * 100, // limit of 100MB for now
             leave_content_encoded: self.leave_content_encoded,
             do_url_encoding: self.do_url_encoding,
+            accept_invalid_cert: self.accept_invalid_cert,
         };
 
         let state = ClientState {
@@ -230,6 +237,7 @@ impl Client {
             url_encoding: encoding::all::UTF_8,
             leave_content_encoded: false,
             do_url_encoding: true,
+            accept_invalid_cert: false,
         }
     }
 
@@ -246,7 +254,16 @@ impl Client {
         log::debug!("tcp stream to '{}:{}' created", config.host, config.port);
 
         if config.use_tls {
-            let connector = TlsConnector::default();
+            let connector = if self.config.accept_invalid_cert {
+                let mut config = rustls::ClientConfig::new();
+                config
+                    .dangerous()
+                    .set_certificate_verifier(Arc::new(danger::NoCertificateVerification {}));
+
+                TlsConnector::from(config)
+            } else {
+                TlsConnector::default()
+            };
 
             log::debug!("opening tsl stream to server name '{}'", &config.host);
 
@@ -517,12 +534,11 @@ impl Client {
                         self.reopen_connections().await;
                         break;
                     }
-                    Err(InternalRequestError::ConnectionIsClosed) => { 
+                    Err(InternalRequestError::ConnectionIsClosed) => 
                         Err(Error { text : format!(
                             "the underlying connection was unexpectedly closed and the maximum retry count of {} was exceeded", 
                             MAX_REPETITIONS)
                         })
-                    }
                 };
 
                 let result = Arc::new(Mutex::new(Some(result)));
@@ -740,4 +756,22 @@ fn illegal_state<T>(errno: usize) -> T {
         "illegal state in http client connection management, this is a bug, error={}",
         errno
     )
+}
+
+mod danger {
+    use webpki;
+
+    pub struct NoCertificateVerification {}
+
+    impl rustls::ServerCertVerifier for NoCertificateVerification {
+        fn verify_server_cert(
+            &self,
+            _roots: &rustls::RootCertStore,
+            _presented_certs: &[rustls::Certificate],
+            _dns_name: webpki::DNSNameRef<'_>,
+            _ocsp: &[u8],
+        ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
+            Ok(rustls::ServerCertVerified::assertion())
+        }
+    }
 }

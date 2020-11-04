@@ -256,7 +256,7 @@ impl Method {
             Post => "POST",
             Delete => "DELETE",
             Put => "PUT",
-            Patch => "PATCH"
+            Patch => "PATCH",
         }
     }
 }
@@ -280,6 +280,7 @@ pub struct ClientConfig {
     pub response_body_limit: usize,
     pub leave_content_encoded: bool,
     pub do_url_encoding: bool,
+    pub accept_invalid_cert: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
