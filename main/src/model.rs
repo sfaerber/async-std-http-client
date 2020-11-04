@@ -123,7 +123,7 @@ impl Request {
     where
         P: ToRequestPartString,
     {
-        Self::build(Method::Get, path)
+        Self::build(Method::Delete, path)
     }
 
     pub fn patch<P>(path: P) -> RequestBuilder
