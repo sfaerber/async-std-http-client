@@ -9,6 +9,7 @@ use async_std::net::TcpStream;
 use async_std::prelude::*;
 use async_std::task;
 use async_tls::{client::TlsStream, TlsConnector};
+use rustls::ProtocolVersion;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{pin::Pin, time::Duration};
@@ -260,7 +261,13 @@ impl Client {
                     .dangerous()
                     .set_certificate_verifier(Arc::new(danger::NoCertificateVerification {}));
 
-                TlsConnector::from(config)
+                config.versions.push(ProtocolVersion::SSLv2);
+                config.versions.push(ProtocolVersion::SSLv3);
+                config.versions.push(ProtocolVersion::TLSv1_0);
+                config.versions.push(ProtocolVersion::TLSv1_1);
+                //config.enable_sni = false;
+
+                TlsConnector::from(Arc::new(config))
             } else {
                 TlsConnector::default()
             };
@@ -273,8 +280,7 @@ impl Client {
                 .map_err(|err| Error {
                     text: format!(
                         "could not etablish TLS connection [accept_invalid_cert={}]: {}",
-                        self.config.accept_invalid_cert,
-                        err
+                        self.config.accept_invalid_cert, err
                     ),
                 })?;
 
@@ -407,7 +413,7 @@ impl Client {
             request_id,
             client: &self,
         }
-            .await
+        .await
     }
 
     fn spawn_connection(&self, con: Connection) {
@@ -483,7 +489,7 @@ impl Client {
                         connection_id,
                         client: &self,
                     }
-                        .fuse();
+                    .fuse();
 
                     futures::select! {
                       i = aw => Some(i),

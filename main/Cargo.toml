@@ -7,7 +7,7 @@ version = "0.1.0"
 
 [dependencies]
 arc-swap = "0.4"
-async-std = "1.6"
+async-std = "1.8"
 base64 = "0.12.3"
 encoding = "0.2.33"
 futures = "0.3"
@@ -22,9 +22,9 @@ serde_json = "1.0"
 smallvec = "1.4.2"
 url = "2.1.1"
 webpki = "*"
-rustls = {version = "*", features = ["dangerous_configuration"]}
+rustls = {version = "0.19.0", features = ["dangerous_configuration"]}
 
 [dependencies.async-tls]
 default-features = false
 features = ["client"]
-version = "0.9"
+version = "0.11"
