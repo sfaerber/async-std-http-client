@@ -9,6 +9,7 @@ version = "0.1.0"
 async-std-http-client = {path = "../main"}
 log = "0.4"
 simple_logger = "1.6.0"
+encoding = "0.2.33"
 
 [dependencies.async-std]
 features = ["attributes"]

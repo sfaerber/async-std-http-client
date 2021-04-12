@@ -159,6 +159,11 @@ fn it_works() {
     }
 
     assert_eq!(
+        &test_encode("abc?dfg", encoding::all::ISO_8859_1),
+        "abc%3Fdfg"
+    );
+
+    assert_eq!(
         &test_encode("m üöä", encoding::all::ISO_8859_1),
         "m%20%FC%F6%E4"
     );
