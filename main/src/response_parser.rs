@@ -205,9 +205,10 @@ impl HttpParserCallback for Callback {
         match HeaderName::from_bytes(data) {
             Ok(n) => self.last_header_name = Some(n),
             Err(_) => {
-                self.error = Some(Error {
-                    text: format!("illformed header"),
-                })
+                log::warn!(
+                    "got illegal header field '{}', header ignored.",
+                    String::from_utf8_lossy(data)
+                )
             }
         }
         Ok(ParseAction::None)
@@ -226,9 +227,10 @@ impl HttpParserCallback for Callback {
                 self.last_header_name = None;
             }
             _ => {
-                self.error = Some(Error {
-                    text: format!("illformed header"),
-                })
+                log::warn!(
+                    "got illegal header value '{}', header ignored.",
+                    String::from_utf8_lossy(data)
+                )
             }
         }
         Ok(ParseAction::None)
